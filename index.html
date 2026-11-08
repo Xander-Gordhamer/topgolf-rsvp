@@ -49,6 +49,18 @@ table { width: 100%; border-collapse: collapse; background: var(--card); border:
 th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); font-size: 15px; }
 th { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 tr:last-child td { border-bottom: 0; }
+tbody tr.person { cursor: pointer; }
+tbody tr.person:hover td { background: color-mix(in srgb, var(--turf) 8%, var(--card)); }
+tbody tr.person:focus-visible { outline: 3px solid color-mix(in srgb, var(--turf) 35%, transparent); outline-offset: -3px; }
+tbody tr.person td:first-child::after { content: "Update"; float: right; font-size: 12px; color: var(--turf); font-weight: 600; opacity: .8; }
+.hint { font-size: 13px; color: var(--muted); }
+.confirm { background: var(--card); border: 1.5px solid var(--turf); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; }
+.confirm p { margin: 0; font-size: 15px; }
+.confirm .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.confirm button { padding: 10px 16px; font-size: 15px; }
+.confirm button.ghost { background: transparent; color: var(--fg); border: 1.5px solid var(--line); }
+.editing { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: color-mix(in srgb, var(--turf) 12%, var(--card)); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+.editing button { padding: 6px 12px; font-size: 13px; background: transparent; color: var(--fg); border: 1.5px solid var(--line); }
 td.c { text-align: center; }
 .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); }
 .pill.yes { background: var(--turf); color: var(--turf-ink); border-color: var(--turf); }
@@ -61,10 +73,11 @@ td.c { text-align: center; }
   <header>
     <div class="eyebrow">RSVP</div>
     <h1>Topgolf on the 19th</h1>
-    <div class="date">Wednesday, November 19 · let us know if you're in</div>
+    <div class="date">Thursday, November 19 · let us know if you're in</div>
   </header>
 
   <form id="rsvp" autocomplete="off">
+    <div class="editing" id="editing" hidden><span id="editing-text"></span><button type="button" id="cancel-edit">Cancel</button></div>
     <label class="field" for="name">Your name
       <input type="text" id="name" name="name" placeholder="First and last" required maxlength="80">
     </label>
@@ -92,6 +105,11 @@ td.c { text-align: center; }
   <section class="tally">
     <h2><span>Who's in</span><span id="total"></span></h2>
     <div class="counts" id="counts"></div>
+    <div class="hint">Tap a name to update that person's answers.</div>
+    <div class="confirm" id="confirm" hidden>
+      <p id="confirm-text"></p>
+      <div class="actions"><button type="button" id="confirm-yes">Yes, update</button><button type="button" class="ghost" id="confirm-no">Cancel</button></div>
+    </div>
     <table>
       <thead><tr><th>Name</th><th class="c">Going</th><th class="c">Been before</th></tr></thead>
       <tbody id="rows"><tr><td colspan="3" class="empty">Loading…</td></tr></tbody>
@@ -131,7 +149,7 @@ td.c { text-align: center; }
     const first = rsvps.filter(r => r.going && !r.been_before).length;
     total.textContent = rsvps.length + (rsvps.length === 1 ? ' reply' : ' replies');
     counts.innerHTML = `<span><b>${going}</b> going</span><span><b>${rsvps.length - going}</b> can't make it</span><span><b>${first}</b> first-timers going</span>`;
-    rows.innerHTML = rsvps.map(r => `<tr>
+    rows.innerHTML = rsvps.map(r => `<tr class="person" tabindex="0" role="button" data-name="${esc(r.name)}" data-going="${r.going}" data-been="${r.been_before}">
       <td>${esc(r.name)}</td>
       <td class="c"><span class="pill ${r.going ? 'yes' : ''}">${r.going ? 'Yes' : 'No'}</span></td>
       <td class="c">${r.been_before ? 'Yes' : 'First time'}</td></tr>`).join('');
@@ -147,6 +165,52 @@ td.c { text-align: center; }
     }
   };
 
+  // Click a name in the list -> confirm -> load that person's answers into the form.
+  const nameInput = document.getElementById('name');
+  const editing = document.getElementById('editing');
+  const editingText = document.getElementById('editing-text');
+  const confirmBox = document.getElementById('confirm');
+  const confirmText = document.getElementById('confirm-text');
+  let pending = null;   // row awaiting confirmation
+  let existing = null;  // person being updated, or null for a new RSVP
+  const setRadio = (group, value) => { const r = form.querySelector(`[name=${group}][value=${value}]`); if (r) r.checked = true; };
+
+  const askToUpdate = tr => {
+    pending = { name: tr.dataset.name, going: tr.dataset.going === 'true', been_before: tr.dataset.been === 'true' };
+    confirmText.textContent = `Are you sure you want to update ${pending.name}'s RSVP?`;
+    confirmBox.hidden = false;
+    confirmBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById('confirm-yes').focus();
+  };
+  rows.addEventListener('click', ev => { const tr = ev.target.closest('tr.person'); if (tr) askToUpdate(tr); });
+  rows.addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const tr = ev.target.closest('tr.person'); if (tr) { ev.preventDefault(); askToUpdate(tr); }
+  });
+  document.getElementById('confirm-no').addEventListener('click', () => { pending = null; confirmBox.hidden = true; });
+  document.getElementById('confirm-yes').addEventListener('click', () => {
+    if (!pending) return;
+    existing = pending; pending = null; confirmBox.hidden = true;
+    nameInput.value = existing.name;
+    setRadio('going', existing.going ? 'yes' : 'no');
+    setRadio('been', existing.been_before ? 'yes' : 'no');
+    editingText.textContent = `Updating ${existing.name}'s RSVP`;
+    editing.hidden = false;
+    btn.textContent = `Update ${existing.name}'s RSVP`;
+    say('');
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  const stopEditing = () => {
+    existing = null; editing.hidden = true; btn.textContent = 'Send my RSVP'; form.reset(); say('');
+  };
+  document.getElementById('cancel-edit').addEventListener('click', stopEditing);
+  // Changing the name while updating means it's someone else: fall back to a new RSVP.
+  nameInput.addEventListener('input', () => {
+    if (existing && nameInput.value.trim().toLowerCase() !== existing.name.trim().toLowerCase()) {
+      existing = null; editing.hidden = true; btn.textContent = 'Send my RSVP';
+    }
+  });
+
   let busy = false;
   form.addEventListener('submit', async ev => {
     ev.preventDefault();
@@ -155,14 +219,18 @@ td.c { text-align: center; }
     const name = String(fd.get('name') || '').trim();
     if (!name || !fd.get('going') || !fd.get('been')) { say('Fill in your name and answer both questions.', 'err'); return; }
     busy = true; btn.disabled = true; say('Saving…');
+    const answers = { going: fd.get('going') === 'yes', been_before: fd.get('been') === 'yes' };
     try {
+      // Every submission is kept as a new row (a history); the list shows each person's latest.
       const res = await fetch(endpoint, {
         method: 'POST', headers: { ...headers, Prefer: 'return=minimal' },
-        body: JSON.stringify({ name, going: fd.get('going') === 'yes', been_before: fd.get('been') === 'yes' })
+        body: JSON.stringify({ name, ...answers })
       });
       if (!res.ok) throw new Error(res.status);
-      say(fd.get('going') === 'yes' ? "You're on the list. See you on the 19th." : 'Got it, thanks for letting us know.', 'ok');
+      const wasUpdate = !!existing;
       await load();
+      stopEditing();
+      say(wasUpdate ? `${name}'s RSVP is updated.` : answers.going ? "You're on the list. See you on the 19th." : 'Got it, thanks for letting us know.', 'ok');
     } catch {
       say('Could not save. Try again in a moment.', 'err');
     } finally { busy = false; btn.disabled = false; }
